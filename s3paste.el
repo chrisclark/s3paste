@@ -101,39 +101,26 @@ Will default to `user-full-name`.")
           (cadr (current-time-zone)) ". (<a href='%s'>original</a>)</p>"))
 
 
-;; From https://www.emacswiki.org/emacs/misc-cmds.el
-;; Candidate as a replacement for `kill-buffer', at least when used interactively.
-;; For example: (define-key global-map [remap kill-buffer] 'kill-buffer-and-its-windows)
-;;
-;; We cannot just redefine `kill-buffer', because some programs count on a
-;; specific other buffer taking the place of the killed buffer (in the window).
-;;;###autoload
-(defun kill-buffer-and-its-windows (buffer)
-  "Kill BUFFER and delete its windows.  Default is `current-buffer'.
-BUFFER may be either a buffer or its name (a string)."
-  (interactive (list (read-buffer "Kill buffer: " (current-buffer) 'existing)))
-  (setq buffer  (get-buffer buffer))
-  (if (buffer-live-p buffer)            ; Kill live buffer only.
-      (let ((wins  (get-buffer-window-list buffer nil t))) ; On all frames.
-        (when (and (buffer-modified-p buffer)
-                   (fboundp '1on1-flash-ding-minibuffer-frame))
-          (1on1-flash-ding-minibuffer-frame t)) ; Defined in `oneonone.el'.
-        (when (kill-buffer buffer)      ; Only delete windows if buffer killed.
-          (dolist (win  wins)           ; (User might keep buffer if modified.)
-            (when (window-live-p win)
-              ;; Ignore error, in particular,
-              ;; "Attempt to delete the sole visible or iconified frame".
-              (condition-case nil (delete-window win) (error nil))))))
-    (when (called-interactively-p 'any)
-      (error "Cannot kill buffer.  Not a live buffer: `%s'" buffer))))
+;; Modified from https://www.emacswiki.org/emacs/misc-cmds.el Both
+;; htmlize-buffer and org-html-export-as-html open a new window with
+;; their generated contents. We kill them with this function to make
+;; the paste experience seamless.
+(defun s3paste-kill-buffer-and-its-windows (buffer)
+  "Kill BUFFER and delete its windows.
+BUFFER must be a buffer (not its name)."
+  (let ((wins (get-buffer-window-list buffer nil t))) ; On all frames.
+    (when (kill-buffer buffer)      ; Only delete windows if buffer killed.
+      (dolist (win wins)           ; (User might keep buffer if modified.)
+        (when (window-live-p win)
+          ;; Ignore error, in particular,
+          ;; "Attempt to delete the sole visible or iconified frame".
+          (condition-case nil (delete-window win) (error nil)))))))
 
 
-;;;###autoload
 (defun do-s3paste (original-name exporter)
-  "Paste the current buffer via `s3cmd' to `s3paste-http-destination'.
-If ORIGINAL-NAME is an empty string, then the buffer name is used
-for the file name.  EXPORTER is the function to generate the html."
-  (interactive "MName (defaults to buffer name): ")
+  "Actually perform the paste.
+Pastes the contents of ORIGINAL-NAME buffer using function
+EXPORTER."
   (let* ((b (generate-new-buffer (generate-new-buffer-name "b")))
          (original-buffer (current-buffer))
          (name (replace-regexp-in-string "[/\\%*:|\"<>  ]+" "_"
@@ -152,7 +139,7 @@ for the file name.  EXPORTER is the function to generate the html."
       (copy-to-buffer b (point-min) (point-max))
       (switch-to-buffer b)
       (write-file tmp-file)
-      (kill-buffer-and-its-windows b)
+      (s3paste-kill-buffer-and-its-windows b)
       (switch-to-buffer hb)
       (goto-char (point-min))
       (search-forward "</body>\n</html>")
@@ -160,7 +147,7 @@ for the file name.  EXPORTER is the function to generate the html."
                       (current-time-string)
                       (substring full-url 0 -5)))
       (write-file tmp-hfile)
-      (kill-buffer-and-its-windows hb))
+      (s3paste-kill-buffer-and-its-windows hb))
 
     (let* ((invocation "s3cmd put")
            (command-1 (concat invocation " " tmp-file " s3://" s3paste-bucket-name))
@@ -187,11 +174,19 @@ for the file name.  EXPORTER is the function to generate the html."
 
 ;;;###autoload
 (defun s3paste (original-name)
+    "Paste the current buffer via `s3cmd' to `s3paste-http-destination'.
+If ORIGINAL-NAME is an empty string, then the buffer name is used
+for the file name.  htmlize-buffer is the function to generate
+the html."
   (interactive "MName (defaults to buffer name): ")
   (do-s3paste original-name 'htmlize-buffer))
 
 ;;;###autoload
 (defun s3paste-org (original-name)
+  "Paste the current buffer via `s3cmd' to `s3paste-http-destination'.
+If ORIGINAL-NAME is an empty string, then the buffer name is used
+for the file name.  org-html-export-as-html is the function to
+generate the html."
   (interactive "MName (defaults to buffer name): ")
   (do-s3paste original-name 'org-html-export-as-html))
 
